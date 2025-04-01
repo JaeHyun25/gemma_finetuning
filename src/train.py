@@ -8,6 +8,7 @@ from transformers import (
 from data_processor import DataProcessor
 from model_utils import ModelUtils
 import logging
+import torch
 
 def setup_logging():
     """로깅 설정"""
@@ -23,6 +24,13 @@ def main():
     logger = logging.getLogger(__name__)
     
     try:
+        # GPU 정보 출력
+        device_count = torch.cuda.device_count()
+        logger.info(f"사용 가능한 GPU 개수: {device_count}")
+        for i in range(device_count):
+            logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+            logger.info(f"GPU {i} 메모리: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f}GB")
+        
         # 설정 파일 경로
         config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 
                                  'config', 'config.yaml')
@@ -54,7 +62,13 @@ def main():
             ddp_find_unused_parameters=model_utils.config['training']['ddp_find_unused_parameters'],
             local_rank=model_utils.config['training']['local_rank'],
             dataloader_num_workers=model_utils.config['training']['dataloader_num_workers'],
-            remove_unused_columns=model_utils.config['training']['remove_unused_columns']
+            remove_unused_columns=model_utils.config['training']['remove_unused_columns'],
+            # 멀티 GPU 설정
+            parallel_mode="distributed" if device_count > 1 else "single",
+            ddp_backend="nccl" if device_count > 1 else "gloo",
+            gradient_checkpointing=True,  # 메모리 효율을 위해 활성화
+            max_grad_norm=1.0,  # 그래디언트 클리핑
+            report_to="tensorboard"  # 학습 모니터링
         )
         
         # Trainer 초기화
@@ -81,4 +95,4 @@ def main():
         raise
 
 if __name__ == "__main__":
-    main() 
+    main()
