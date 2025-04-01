@@ -24,7 +24,23 @@ class ModelUtils:
         self.device_count = torch.cuda.device_count()
         print(f"사용 가능한 GPU 개수: {self.device_count}")
         for i in range(self.device_count):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+            gpu_props = torch.cuda.get_device_properties(i)
+            print(f"GPU {i}: {gpu_props.name}")
+            print(f"  - 메모리: {gpu_props.total_memory / 1024**3:.2f}GB")
+            print(f"  - CUDA 기능: {gpu_props.major}.{gpu_props.minor}")
+            
+            # NVLink 지원 확인
+            if hasattr(gpu_props, 'multi_processor_count'):
+                print(f"  - 멀티 프로세서 수: {gpu_props.multi_processor_count}")
+            
+        # CUDA 설정
+        if torch.cuda.is_available():
+            # CUDA 캐시 초기화
+            torch.cuda.empty_cache()
+            # CUDA 그래프 최적화
+            torch.backends.cudnn.benchmark = True
+            # CUDA 그래프 캐시 크기 설정
+            torch.cuda.set_per_process_memory_fraction(0.95)  # GPU 메모리 사용량 제한
     
     def get_quantization_config(self) -> BitsAndBytesConfig:
         """양자화 설정 생성
@@ -75,9 +91,25 @@ class ModelUtils:
                 "model.norm": 0,
                 "lm_head": 0
             }
-            # 트랜스포머 레이어를 GPU 간에 분산
-            for i in range(32):  # Gemma 모델의 레이어 수에 따라 조정
-                device_map[f"model.layers.{i}"] = i % self.device_count
+            
+            # GPU 메모리 크기에 따라 레이어 분산
+            gpu_memories = [torch.cuda.get_device_properties(i).total_memory for i in range(self.device_count)]
+            total_memory = sum(gpu_memories)
+            
+            # 레이어 수 계산 (Gemma 모델의 경우)
+            num_layers = 32  # 모델에 따라 조정 필요
+            
+            # 메모리 비율에 따라 레이어 분산
+            for i in range(num_layers):
+                # 메모리 비율에 따라 GPU 선택
+                gpu_idx = 0
+                current_sum = 0
+                for j, mem in enumerate(gpu_memories):
+                    current_sum += mem
+                    if i / num_layers <= current_sum / total_memory:
+                        gpu_idx = j
+                        break
+                device_map[f"model.layers.{i}"] = gpu_idx
         else:
             device_map = "auto"
         
