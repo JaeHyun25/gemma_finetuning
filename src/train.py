@@ -9,6 +9,7 @@ from data_processor import DataProcessor
 from model_utils import ModelUtils
 import logging
 import torch
+import torch.distributed as dist
 
 def setup_logging():
     """로깅 설정"""
@@ -16,6 +17,26 @@ def setup_logging():
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
+
+def setup_distributed():
+    """분산 학습 설정"""
+    if torch.cuda.is_available():
+        # CUDA 초기화
+        torch.cuda.empty_cache()
+        
+        # NCCL 백엔드 설정
+        if torch.cuda.device_count() > 1:
+            # NCCL 환경 변수 설정
+            os.environ['NCCL_DEBUG'] = 'INFO'
+            os.environ['NCCL_IB_DISABLE'] = '0'
+            os.environ['NCCL_P2P_DISABLE'] = '0'
+            
+            # NVLink 사용 설정 (가능한 경우)
+            if hasattr(torch.cuda, 'nccl'):
+                torch.cuda.nccl.set_nccl_options(
+                    nccl_use_nvlink=True,
+                    nccl_use_p2p=True
+                )
 
 def main():
     """메인 함수"""
@@ -28,8 +49,17 @@ def main():
         device_count = torch.cuda.device_count()
         logger.info(f"사용 가능한 GPU 개수: {device_count}")
         for i in range(device_count):
-            logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-            logger.info(f"GPU {i} 메모리: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f}GB")
+            gpu_props = torch.cuda.get_device_properties(i)
+            logger.info(f"GPU {i}: {gpu_props.name}")
+            logger.info(f"  - 메모리: {gpu_props.total_memory / 1024**3:.2f}GB")
+            logger.info(f"  - CUDA 기능: {gpu_props.major}.{gpu_props.minor}")
+            
+            # NVLink 지원 확인
+            if hasattr(gpu_props, 'multi_processor_count'):
+                logger.info(f"  - 멀티 프로세서 수: {gpu_props.multi_processor_count}")
+        
+        # 분산 학습 설정
+        setup_distributed()
         
         # 설정 파일 경로
         config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 
@@ -68,7 +98,17 @@ def main():
             ddp_backend="nccl" if device_count > 1 else "gloo",
             gradient_checkpointing=True,  # 메모리 효율을 위해 활성화
             max_grad_norm=1.0,  # 그래디언트 클리핑
-            report_to="tensorboard"  # 학습 모니터링
+            report_to="tensorboard",  # 학습 모니터링
+            # 성능 최적화
+            dataloader_pin_memory=True,  # 데이터 로딩 최적화
+            dataloader_prefetch_factor=2,  # 데이터 프리페칭
+            gradient_checkpointing_kwargs={"use_reentrant": False},  # 그래디언트 체크포인팅 최적화
+            # 메모리 최적화
+            optim="paged_adamw_8bit",  # 8비트 옵티마이저
+            max_grad_norm=1.0,  # 그래디언트 클리핑
+            # 로깅 설정
+            logging_first_step=True,
+            logging_nan_inf_filter=False
         )
         
         # Trainer 초기화
