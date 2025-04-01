@@ -1,0 +1,54 @@
+model:
+  path: "./gemma_model"
+  output_dir: "./gemma_finetuned"
+  final_output_dir: "./gemma_finetuned_final"
+
+training:
+  epochs: 3
+  batch_size: 2
+  gradient_accumulation_steps: 2
+  learning_rate: 5e-4
+  weight_decay: 0.01
+  warmup_steps: 50
+  logging_steps: 10
+  save_steps: 100
+  fp16: true
+  optim: "paged_adamw_8bit"
+  ddp_find_unused_parameters: false
+  local_rank: -1
+  dataloader_num_workers: 0
+  remove_unused_columns: false
+
+lora:
+  r: 32
+  lora_alpha: 64
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.1
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_quant_type: "nf4"
+  llm_int8_enable_fp32_cpu_offload: true
+
+data:
+  input_file: "./bas_training_data.csv"
+  augmentation:
+    repeat_count: 3
+    variations:
+      - "Instruction:"
+      - "Task:"
+      - "Input:"
+      - "Context:"
+      - "Output:"
+      - "Response:" 
