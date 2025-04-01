@@ -19,6 +19,12 @@ class ModelUtils:
         """
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
+            
+        # GPU 설정
+        self.device_count = torch.cuda.device_count()
+        print(f"사용 가능한 GPU 개수: {self.device_count}")
+        for i in range(self.device_count):
+            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
     
     def get_quantization_config(self) -> BitsAndBytesConfig:
         """양자화 설정 생성
@@ -61,11 +67,25 @@ class ModelUtils:
             trust_remote_code=True
         )
         
+        # 멀티 GPU 설정
+        if self.device_count > 1:
+            # 각 GPU에 모델을 분산
+            device_map = {
+                "model.embed_tokens": 0,
+                "model.norm": 0,
+                "lm_head": 0
+            }
+            # 트랜스포머 레이어를 GPU 간에 분산
+            for i in range(32):  # Gemma 모델의 레이어 수에 따라 조정
+                device_map[f"model.layers.{i}"] = i % self.device_count
+        else:
+            device_map = "auto"
+        
         # 모델 로드
         model = AutoModelForCausalLM.from_pretrained(
             self.config['model']['path'],
             quantization_config=self.get_quantization_config(),
-            device_map="auto",
+            device_map=device_map,
             trust_remote_code=True,
             torch_dtype=torch.float16
         )
@@ -74,4 +94,4 @@ class ModelUtils:
         model = get_peft_model(model, self.get_lora_config())
         model.print_trainable_parameters()
         
-        return model, tokenizer 
+        return model, tokenizer
