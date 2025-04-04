@@ -1,0 +1,60 @@
+# config.yaml
+model:
+  path: "./gemma_model"  # 사용할 사전 훈련된 모델 경로 또는 이름
+  output_dir: "./gemma_finetuned" # 체크포인트 저장 경로
+  final_output_dir: "./gemma_finetuned_final" # 최종 모델 저장 경로
+
+training:
+  epochs: 3
+  batch_size: 2 # 각 GPU당 배치 크기
+  gradient_accumulation_steps: 2 # 그래디언트 누적 스텝 (effective_batch_size = batch_size * num_gpus * gradient_accumulation_steps)
+  learning_rate: 5e-4 # 학습률 (모델/데이터에 따라 1e-5 ~ 5e-5 범위도 고려)
+  weight_decay: 0.01
+  warmup_steps: 50
+  logging_steps: 10 # 몇 스텝마다 로그를 출력할지
+  save_steps: 100 # 몇 스텝마다 모델 체크포인트를 저장할지
+  fp16: true # Mixed Precision Training 사용 여부 (Ampere 이상 GPU 권장)
+  optim: "paged_adamw_8bit" # 메모리 효율적인 AdamW 옵티마이저 (QLoRA와 잘 맞음)
+  ddp_find_unused_parameters: false # LoRA 사용 시 True로 설정하면 오류 발생 가능. gradient_checkpointing과 함께 사용할 때 DDP 오류 발생 시 True로 변경 고려 (성능 저하 가능)
+  local_rank: -1 # 분산 학습 시 런처(torchrun/accelerate launch)가 자동으로 설정하도록 -1 유지
+  dataloader_num_workers: 0 # 데이터 로딩 워커 수 (CPU 코어 수 등을 고려하여 0 이상으로 설정 시 성능 향상 가능)
+  # remove_unused_columns: true # Trainer가 자동으로 처리하도록 주석 처리 또는 true 설정 (기본값 True)
+  gradient_checkpointing: true # 메모리 절약을 위해 그래디언트 체크포인팅 사용
+  gradient_checkpointing_kwargs: {"use_reentrant": false} # non-reentrant 버전 사용 (더 빠를 수 있음)
+  max_grad_norm: 1.0 # 그래디언트 클리핑 값
+  report_to: "tensorboard" # 학습 결과 리포팅 도구 (wandb 등도 가능)
+  logging_first_step: true # 첫 스텝 로그 출력 여부
+  logging_nan_inf_filter: true # NaN/Inf 그래디언트 로깅 필터 활성화 (디버깅에 유용)
+
+lora:
+  r: 32 # LoRA 랭크
+  lora_alpha: 64 # LoRA 알파 (스케일링 팩터)
+  target_modules: # LoRA를 적용할 모듈 이름 (모델 아키텍처에 따라 다름)
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.1
+  bias: "none" # LoRA 레이어의 bias 사용 여부 ("none", "all", "lora_only")
+  task_type: "CAUSAL_LM"
+
+quantization:
+  load_in_4bit: true # 4비트 양자화 사용
+  bnb_4bit_compute_dtype: "float16" # 계산 시 사용할 데이터 타입 (BF16도 가능 - Ampere 이상)
+  bnb_4bit_use_double_quant: true # 이중 양자화 사용 (메모리 절약)
+  bnb_4bit_quant_type: "nf4" # 양자화 타입 (nf4 또는 fp4)
+  # llm_int8_enable_fp32_cpu_offload: true # 8비트 양자화용 옵션이므로 4비트 사용 시 제거
+
+data:
+  input_file: "./bas_training_data.csv" # 입력 데이터 파일 경로
+  max_length: 512 # 토큰화 시 최대 길이
+  augmentation:
+    apply: true # 데이터 증강 적용 여부
+    repeat_count: 3 # 원본 데이터를 몇 번 복제할지
+    variations: # 키워드 변형 규칙 [원본 키워드, 대체 키워드1, 대체 키워드2, ...]
+      instruction: ["Instruction:", "Task:", "Objective:"]
+      input: ["Input:", "Context:", "Given:"]
+      output: ["Output:", "Response:", "Result:"]
